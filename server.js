@@ -2,6 +2,8 @@ const express = require("express");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./config/swagger");
 const dotenv = require("dotenv");
+
+// Import routes
 const authRoutes = require("./routes/authRoutes");
 const inviteRoutes = require("./routes/inviteRoutes");
 const projectRoutes = require("./routes/projectRoutes");
@@ -35,10 +37,10 @@ app.get("/", (req, res) => {
     });
 });
 
-app.listen(PORT, () => {
-    console.log("Ticketing Tool Backend");
-    console.log("=================================");
-    console.log(`Server:   http://localhost:${PORT}`);
-    console.log(`Swagger:  http://localhost:${PORT}/api-docs`);
-    console.log("Database: Connected");
-});
+// app.listen(PORT, () => {
+//     console.log("Ticketing Tool Backend");
+//     console.log("=================================");
+//     console.log(`Server:   http://localhost:${PORT}`);
+//     console.log(`Swagger:  http://localhost:${PORT}/api-docs`);
+//     console.log("Database: Connected");
+// });
