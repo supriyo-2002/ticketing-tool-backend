@@ -44,3 +44,5 @@ app.get("/", (req, res) => {
 //     console.log(`Swagger:  http://localhost:${PORT}/api-docs`);
 //     console.log("Database: Connected");
 // });
+
+module.exports = app;
