@@ -1,8 +1,9 @@
 
 const express = require("express");
+const dotenv = require("dotenv");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./config/swagger");
-const dotenv = require("dotenv");
+
 
 // Import API routes.
 const authRoutes = require("./routes/authRoutes");
@@ -22,13 +23,17 @@ const PORT = process.env.PORT || 5000;
 // Parse incoming JSON request bodies.
 app.use(express.json());
 
-// Serve Swagger UI and its static assets.
-app.use(
-    "/api-docs",
-    swaggerUi.serve,
-    swaggerUi.setup(swaggerSpec)
-);
+// Expose the OpenAPI specification for Postman.
+app.get("/openapi.json", (req, res) => {
+  res.status(200).json(swaggerSpec);
+});
 
+// Serve the Swagger UI.
+app.use(
+  "/api-docs",
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec)
+);
 // Register API routes.
 app.use("/api/auth", authRoutes);
 app.use("/api/auth", inviteRoutes);
@@ -47,14 +52,14 @@ app.get("/", (req, res) => {
 
 // Start the server locally.
 // Vercel uses the exported Express app instead.
-// if (require.main === module) {
-//     app.listen(PORT, () => {
-//         console.log("Ticketing Tool Backend");
-//         console.log("=================================");
-//         console.log(`Server:  http://localhost:${PORT}`);
-//         console.log(`Swagger: http://localhost:${PORT}/api-docs`);
-//     });
-// }
+if (require.main === module) {
+    app.listen(PORT, () => {
+        console.log("Ticketing Tool Backend");
+        console.log("=================================");
+        console.log(`Server:  http://localhost:${PORT}`);
+        console.log(`Swagger: http://localhost:${PORT}/api-docs`);
+    });
+}
 
 // Export the Express app for Vercel.
 module.exports = app;

@@ -11,12 +11,16 @@ const {
   deleteProject
 } = require("../controllers/projectControllers");
 
+
 /**
  * @swagger
  * /api/projects:
  *   post:
  *     summary: Create a project
- *     description: Creates a project in the authenticated user's organization.
+ *     description: >
+ *       Creates a project in the authenticated user's organization.
+ *       The project creator is automatically added as a project member.
+ *       Additional employees can be selected using member_ids.
  *     tags:
  *       - Projects
  *     security:
@@ -33,39 +37,57 @@ const {
  *               name:
  *                 type: string
  *                 example: Website Redesign
+ *                 description: Name of the project.
  *               description:
  *                 type: string
  *                 nullable: true
  *                 example: Redesign the company website
+ *                 description: Optional description of the project.
+ *               member_ids:
+ *                 type: array
+ *                 description: >
+ *                   UUIDs of employees to add to the project.
+ *                   All selected employees must belong to the authenticated
+ *                   user's organization. The creator is added automatically.
+ *                 items:
+ *                   type: string
+ *                   format: uuid
+ *                 example:
+ *                   - 11111111-1111-4111-8111-111111111111
+ *                   - 22222222-2222-4222-8222-222222222222
  *     responses:
  *       201:
- *         description: Project created successfully
+ *         description: Project created successfully with project members.
  *       400:
- *         description: Invalid project name or description
+ *         description: Invalid project name, description, or member IDs.
  *       401:
- *         description: Missing or invalid authentication
+ *         description: Missing or invalid authentication.
  *       500:
- *         description: Server or database error
+ *         description: Server or database error.
  */
 router.post("/", authMiddleware, createProject);
+
+
 
 /**
  * @swagger
  * /api/projects:
  *   get:
  *     summary: Get all projects
- *     description: Retrieves all projects for the authenticated user's organization.
+ *     description: >
+ *       Retrieves all projects belonging to the authenticated user's
+ *       organization, including the details of their project members.
  *     tags:
  *       - Projects
  *     security:
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Projects retrieved successfully
+ *         description: Projects and their members retrieved successfully.
  *       401:
- *         description: Missing or invalid authentication
+ *         description: Missing or invalid authentication.
  *       500:
- *         description: Server or database error
+ *         description: Failed to retrieve projects or project members.
  */
 router.get("/", authMiddleware, getProjects);
 
@@ -74,7 +96,9 @@ router.get("/", authMiddleware, getProjects);
  * /api/projects/{projectId}:
  *   get:
  *     summary: Get a project by ID
- *     description: Retrieves a project by its ID for the authenticated user's organization.
+ *     description: >
+ *       Retrieves a project belonging to the authenticated user's
+ *       organization, including its associated project members.
  *     tags:
  *       - Projects
  *     security:
@@ -85,27 +109,34 @@ router.get("/", authMiddleware, getProjects);
  *         required: true
  *         schema:
  *           type: string
- *         description: Project ID
+ *           format: uuid
+ *         description: UUID of the project.
  *     responses:
  *       200:
- *         description: Project retrieved successfully
+ *         description: Project and its members retrieved successfully.
  *       400:
- *         description: Invalid project ID format
+ *         description: Invalid project ID format.
  *       401:
- *         description: Missing or invalid authentication
+ *         description: Missing or invalid authentication.
  *       404:
- *         description: Project not found
+ *         description: Project not found.
  *       500:
- *         description: Failed to retrieve project
+ *         description: Failed to retrieve project or its members.
  */
 router.get("/:projectId", authMiddleware, getProjectById);
+
 
 /**
  * @swagger
  * /api/projects/{projectId}:
  *   put:
  *     summary: Update a project
- *     description: Updates a project by its ID for the authenticated user's organization.
+ *     description: >
+ *       Updates a project's name or description and optionally synchronizes
+ *       its project members. When member_ids is supplied, it becomes the
+ *       desired membership list. The original project creator is retained
+ *       automatically. If member_ids is omitted, existing memberships remain
+ *       unchanged.
  *     tags:
  *       - Projects
  *     security:
@@ -116,7 +147,8 @@ router.get("/:projectId", authMiddleware, getProjectById);
  *         required: true
  *         schema:
  *           type: string
- *         description: Project ID
+ *           format: uuid
+ *         description: UUID of the project.
  *     requestBody:
  *       required: true
  *       content:
@@ -127,20 +159,35 @@ router.get("/:projectId", authMiddleware, getProjectById);
  *               name:
  *                 type: string
  *                 example: Website Redesign
+ *                 description: New project name.
  *               description:
  *                 type: string
+ *                 nullable: true
  *                 example: Redesign the company website
+ *                 description: New description, or null to clear it.
+ *               member_ids:
+ *                 type: array
+ *                 description: >
+ *                   Desired list of project member user IDs.
+ *                   The original project creator is retained automatically.
+ *                   Sending an empty array removes all other members.
+ *                 items:
+ *                   type: string
+ *                   format: uuid
+ *                 example:
+ *                   - 11111111-1111-4111-8111-111111111111
+ *                   - 22222222-2222-4222-8222-222222222222
  *     responses:
  *       200:
- *         description: Project updated successfully
+ *         description: Project updated successfully, including its members.
  *       400:
- *         description: Invalid project ID format or update data
+ *         description: Invalid project ID, project details, or member IDs.
  *       401:
- *         description: Missing or invalid authentication
+ *         description: Missing or invalid authentication.
  *       404:
- *         description: Project not found
+ *         description: Project not found.
  *       500:
- *         description: Server or database error
+ *         description: Failed to update the project or its members.
  */
 router.put("/:projectId", authMiddleware, updateProject);
 
