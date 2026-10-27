@@ -1,9 +1,12 @@
-
 const express = require("express");
 const dotenv = require("dotenv");
+
+// Load environment variables before importing configuration.
+dotenv.config();
+
+const cors = require("cors");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./config/swagger");
-
 
 // Import API routes.
 const authRoutes = require("./routes/authRoutes");
@@ -12,28 +15,30 @@ const projectRoutes = require("./routes/projectRoutes");
 const employeeRoutes = require("./routes/employeeRoutes");
 const ticketRoutes = require("./routes/ticketRoutes");
 
-// Load environment variables from .env during local development.
-// Vercel environment variables are configured in the Vercel dashboard.
-dotenv.config();
-
 // Initialize the Express application.
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Parse incoming JSON request bodies.
+// Configure CORS.
+// This allows frontend applications from different origins to call the API.
+// Restrict the allowed origins before using this configuration in production.
+app.use(cors());
+
+// Handle incoming JSON request bodies.
 app.use(express.json());
 
 // Expose the OpenAPI specification for Postman.
 app.get("/openapi.json", (req, res) => {
-  res.status(200).json(swaggerSpec);
+    res.status(200).json(swaggerSpec);
 });
 
 // Serve the Swagger UI.
 app.use(
-  "/api-docs",
-  swaggerUi.serve,
-  swaggerUi.setup(swaggerSpec)
+    "/api-docs",
+    swaggerUi.serve,
+    swaggerUi.setup(swaggerSpec)
 );
+
 // Register API routes.
 app.use("/api/auth", authRoutes);
 app.use("/api/auth", inviteRoutes);
@@ -51,7 +56,6 @@ app.get("/", (req, res) => {
 });
 
 // Start the server locally.
-// Vercel uses the exported Express app instead.
 if (require.main === module) {
     app.listen(PORT, () => {
         console.log("Ticketing Tool Backend");
@@ -61,5 +65,5 @@ if (require.main === module) {
     });
 }
 
-// Export the Express app for Vercel.
+// Export the Express application for Vercel.
 module.exports = app;
