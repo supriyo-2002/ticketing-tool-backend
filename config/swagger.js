@@ -19,7 +19,10 @@ const options = {
     // Base URL of our backend API.
     servers: [
       {
-        url: process.env.API_BASE_URL || "https://ticketing-tool-backend-teal.vercel.app",
+        url:
+          process.env.NODE_ENV === "production"
+            ? "https://ticketing-tool-backend-teal.vercel.app"
+            : "http://localhost:5000",
       },
     ],
     components: {

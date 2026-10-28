@@ -570,7 +570,7 @@ const resendInvite = async (req, res) => {
         } = await supabaseAdmin.auth.admin.inviteUserByEmail(
             invitation.email,
             {
-                redirectTo: `${process.env.FRONTEND_URL || "http://localhost:3000"}/accept-invite`
+                redirectTo: `${process.env.FRONTEND_URL || "http://localhost:5173"}/accept-invite`
             }
         );
 

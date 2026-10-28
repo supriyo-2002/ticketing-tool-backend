@@ -14,6 +14,7 @@ const inviteRoutes = require("./routes/inviteRoutes");
 const projectRoutes = require("./routes/projectRoutes");
 const employeeRoutes = require("./routes/employeeRoutes");
 const ticketRoutes = require("./routes/ticketRoutes");
+const dashboardRoutes = require("./routes/dashboardRoutes");
 
 // Initialize the Express application.
 const app = express();
@@ -45,6 +46,7 @@ app.use("/api/auth", inviteRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/employees", employeeRoutes);
 app.use("/api/tickets", ticketRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 // Health-check endpoint.
 app.get("/", (req, res) => {
