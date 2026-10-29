@@ -15,6 +15,8 @@ const projectRoutes = require("./routes/projectRoutes");
 const employeeRoutes = require("./routes/employeeRoutes");
 const ticketRoutes = require("./routes/ticketRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
+const statusRoutes = require("./routes/statusRoutes");
+const priorityRoutes = require("./routes/priorityRoutes");
 
 // Initialize the Express application.
 const app = express();
@@ -47,6 +49,8 @@ app.use("/api/projects", projectRoutes);
 app.use("/api/employees", employeeRoutes);
 app.use("/api/tickets", ticketRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/statuses", statusRoutes);
+app.use("/api/priorities", priorityRoutes);
 
 // Health-check endpoint.
 app.get("/", (req, res) => {
