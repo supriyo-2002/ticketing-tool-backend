@@ -671,10 +671,224 @@ const resendInvite = async (req, res) => {
     });
   }
 };
+// GET ALL INVITATIONS
+// Allows an ADMIN to view invitation history for their organization.
+const getInvitations = async (req, res) => {
+  try {
+    // STEP 1: Get the authenticated user from the authentication middleware.
+    const currentUser = req.user;
 
+    if (!currentUser) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required.",
+      });
+    }
+
+    // STEP 2: Only ADMIN users can view organization invitation history.
+    if (currentUser.role !== "ADMIN") {
+      return res.status(403).json({
+        success: false,
+        message: "Only ADMIN users can view invitations.",
+      });
+    }
+
+    // STEP 3: Read optional search, status, and pagination parameters.
+    const search = (req.query.search || "").trim();
+    const requestedStatus = (req.query.status || "").toUpperCase();
+
+    const allowedStatuses = [
+      "PENDING",
+      "ACCEPTED",
+      "EXPIRED",
+      "CANCELLED",
+    ];
+
+    if (requestedStatus && !allowedStatuses.includes(requestedStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status filter.",
+        allowedStatuses,
+      });
+    }
+
+    // Default to 10 invitations per page; limit the maximum to 100.
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(
+      100,
+      Math.max(1, parseInt(req.query.limit, 10) || 10)
+    );
+
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    // Use one timestamp consistently for expiry checks in this request.
+    const now = new Date().toISOString();
+
+    // STEP 4: Prepare the invitation list query.
+    // Always restrict the results to the authenticated ADMIN's organization.
+    let invitationQuery = supabaseAdmin
+      .from("invites")
+      .select(
+        `
+          invite_id,
+          organization_id,
+          email,
+          role,
+          invited_by,
+          status,
+          created_at,
+          last_sent_at,
+          resend_count,
+          expires_at,
+          accepted_at
+        `,
+        { count: "exact" }
+      )
+      .eq("organization_id", currentUser.organization_id);
+
+    // STEP 5: Apply the optional email search.
+    if (search) {
+      invitationQuery = invitationQuery.ilike("email", `%${search}%`);
+    }
+
+    // STEP 6: Apply the optional status filter.
+    // A pending invitation whose expiry time has passed is treated as EXPIRED.
+    if (requestedStatus === "EXPIRED") {
+      invitationQuery = invitationQuery.or(
+        `status.eq.EXPIRED,and(status.eq.PENDING,expires_at.lte.${now})`
+      );
+    } else if (requestedStatus === "PENDING") {
+      invitationQuery = invitationQuery
+        .eq("status", "PENDING")
+        .gt("expires_at", now);
+    } else if (requestedStatus) {
+      invitationQuery = invitationQuery.eq("status", requestedStatus);
+    }
+
+    // STEP 7: Fetch the requested page, newest invitations first.
+    const {
+      data: invitations,
+      error: invitationsError,
+      count: filteredCount,
+    } = await invitationQuery
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (invitationsError) {
+      console.error("Get invitations error:", invitationsError);
+
+      return res.status(500).json({
+        success: false,
+        message: "Could not retrieve invitations.",
+      });
+    }
+
+    // STEP 8: Normalize expired invitations in the response.
+    // This does not update the database status.
+    const normalizedInvitations = (invitations || []).map((invitation) => {
+      const isExpired =
+        invitation.status === "EXPIRED" ||
+        (invitation.status === "PENDING" &&
+          new Date(invitation.expires_at).getTime() <= Date.now());
+
+      return {
+        ...invitation,
+        status: isExpired ? "EXPIRED" : invitation.status,
+      };
+    });
+
+    // STEP 9: Count all invitations belonging to this organization.
+    // These counts cover the whole organization, not just the current page.
+    const countQuery = () =>
+      supabaseAdmin
+        .from("invites")
+        .select("invite_id", { count: "exact", head: true })
+        .eq("organization_id", currentUser.organization_id);
+
+    const [
+      totalResult,
+      pendingResult,
+      acceptedResult,
+      expiredResult,
+      cancelledResult,
+    ] = await Promise.all([
+      // Total invitations in every status.
+      countQuery(),
+
+      // Pending invitations that have not expired.
+      countQuery()
+        .eq("status", "PENDING")
+        .gt("expires_at", now),
+
+      // Invitations accepted by employees.
+      countQuery().eq("status", "ACCEPTED"),
+
+      // Explicitly expired invitations plus pending invitations past expiry.
+      countQuery().or(
+        `status.eq.EXPIRED,and(status.eq.PENDING,expires_at.lte.${now})`
+      ),
+
+      // Invitations cancelled by the application.
+      countQuery().eq("status", "CANCELLED"),
+    ]);
+
+    // STEP 10: Check for summary-query errors.
+    const summaryResults = [
+      totalResult,
+      pendingResult,
+      acceptedResult,
+      expiredResult,
+      cancelledResult,
+    ];
+
+    const summaryError = summaryResults.find((result) => result.error);
+
+    if (summaryError) {
+      console.error("Invitation summary error:", summaryError.error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Could not retrieve invitation summary.",
+      });
+    }
+
+    // STEP 11: Return the invitation list, summary, and pagination metadata.
+    return res.status(200).json({
+      success: true,
+      message: "Invitations retrieved successfully.",
+
+      summary: {
+        totalInvitations: totalResult.count || 0,
+        pendingInvitations: pendingResult.count || 0,
+        acceptedInvitations: acceptedResult.count || 0,
+        expiredInvitations: expiredResult.count || 0,
+        cancelledInvitations: cancelledResult.count || 0,
+      },
+
+      pagination: {
+        page,
+        limit,
+        totalRecords: filteredCount || 0,
+        totalPages: Math.ceil((filteredCount || 0) / limit),
+      },
+
+      data: normalizedInvitations,
+    });
+  } catch (error) {
+    // Log unexpected errors without exposing internal details to the client.
+    console.error("Get invitations controller error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+    });
+  }
+};
 
 module.exports = {
   inviteEmployee,
   acceptInvite,
   resendInvite,
-};
+  getInvitations,
+}
