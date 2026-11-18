@@ -701,12 +701,23 @@ const logout = async (req, res) => {
 // 2. Ask Supabase Auth to send a password recovery email.
 // 3. Redirect the employee to the frontend reset-password page.
 // -------------------------------------------------------------
+
+
 const forgotPassword = async (req, res) => {
+    console.log("\n========== FORGOT PASSWORD DEBUG START ==========");
+
     try {
+        // STEP 1: Check whether the API is being called.
+        console.log("[STEP 1] Forgot password API called.");
+
         const { email } = req.body;
 
-        // STEP 1: Validate the email address.
-        if (!email || !email.trim()) {
+        console.log("[STEP 2] Request email received:", email);
+
+        // Validate email.
+        if (!email || typeof email !== "string" || !email.trim()) {
+            console.log("[VALIDATION ERROR] Email is missing.");
+
             return res.status(400).json({
                 success: false,
                 message: "Email address is required."
@@ -715,55 +726,83 @@ const forgotPassword = async (req, res) => {
 
         const normalizedEmail = email.trim().toLowerCase();
 
-        // Basic email format validation.
+        console.log("[STEP 3] Normalized email:", normalizedEmail);
+
+        // Validate email format.
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
         if (!emailRegex.test(normalizedEmail)) {
+            console.log("[VALIDATION ERROR] Invalid email format.");
+
             return res.status(400).json({
                 success: false,
                 message: "Please enter a valid email address."
             });
         }
 
-        // STEP 2: Build the frontend password reset URL.
+        // STEP 4: Check frontend URL.
         const frontendUrl = process.env.FRONTEND_URL;
 
+        console.log("[STEP 4] FRONTEND_URL:", frontendUrl);
+
         if (!frontendUrl) {
-            console.error("FRONTEND_URL is not configured.");
+            console.log("[CONFIG ERROR] FRONTEND_URL is missing.");
 
             return res.status(500).json({
                 success: false,
-                message: "Password recovery is currently unavailable."
+                message: "Password recovery is temporarily unavailable."
             });
         }
 
-        const redirectUrl = `${frontendUrl.replace(/\/$/, "")}/reset-password`;
+        const redirectUrl =
+            `${frontendUrl.replace(/\/$/, "")}/reset-password`;
 
-        // STEP 3: Ask Supabase Auth to send the recovery email.
-        const { error } = await supabaseAuth.auth.resetPasswordForEmail(
-            normalizedEmail,
-            {
-                redirectTo: redirectUrl
-            }
-        );
+        console.log("[STEP 5] Recovery redirect URL:", redirectUrl);
+
+        // STEP 5: Call Supabase password recovery.
+        console.log("[STEP 6] Calling Supabase resetPasswordForEmail...");
+
+        const { data, error } =
+            await supabaseAuth.auth.resetPasswordForEmail(
+                normalizedEmail,
+                {
+                    redirectTo: redirectUrl
+                }
+            );
+
+        // STEP 6: Inspect Supabase response.
+        console.log("[STEP 7] Supabase response received.");
+
+        console.log("[SUPABASE DATA]:", data);
 
         if (error) {
-            console.error("Supabase forgot password error:", error.message);
+            console.error("[SUPABASE ERROR]:", {
+                name: error.name,
+                code: error.code,
+                status: error.status,
+                message: error.message
+            });
 
-            return res.status(500).json({
+            return res.status(502).json({
                 success: false,
-                message: "Unable to process your request. Please try again later."
+                code: error.code || "PASSWORD_RESET_EMAIL_FAILED",
+                message: "Supabase could not process the password recovery request."
             });
         }
 
-        // STEP 4: Return a generic response to prevent email enumeration.
+        console.log("[STEP 8] Supabase returned no error.");
+        console.log("[STEP 9] Recovery request accepted by Supabase.");
+
+        console.log("========== FORGOT PASSWORD DEBUG END ==========\n");
+
         return res.status(200).json({
             success: true,
-            message: "If an account exists for this email, a password reset link will be sent."
+            message: "If an account exists for this email, a password reset email will be sent."
         });
 
     } catch (error) {
-        console.error("Forgot password controller error:", error);
+        console.error("[FORGOT PASSWORD EXCEPTION]:", error);
+        console.error("[ERROR STACK]:", error.stack);
 
         return res.status(500).json({
             success: false,
