@@ -123,7 +123,7 @@ router.post(
  *               email:
  *                 type: string
  *                 format: email
- *                 example: supriyo@example.com
+ *                 example: supriyo.maity@zenydata.com
  *               password:
  *                 type: string
  *                 format: password

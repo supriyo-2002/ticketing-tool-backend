@@ -161,31 +161,17 @@ const inviteEmployee = async (req, res) => {
       await supabaseAdmin.auth.admin.inviteUserByEmail(normalizedEmail, {
         redirectTo: redirectUrl,
       });
-    // STEP: Save the Supabase Auth user ID against the invitation.
-    const { error: authLinkError } = await supabaseAdmin
-      .from("invites")
-      .update({
-        auth_user_id: invitedUser.user.id,
-      })
-      .eq("invite_id", invitation.invite_id);
 
-    if (authLinkError) {
-      console.error("Auth user linking error:", authLinkError);
-
-      return res.status(500).json({
-        success: false,
-        message: "Invitation was sent, but Auth user linking failed.",
-      });
-    }
-    // STEP 10: Handle invitation email failure.
-    if (inviteError) {
+    // STEP 10: Handle invitation email failure BEFORE accessing the user ID.
+    if (inviteError || !invitedUser?.user) {
       console.error("Supabase invitation error:", inviteError);
 
-      // Mark the invitation as cancelled.
+      // Mark the invitation as cancelled because sending failed.
       const { error: cancelError } = await supabaseAdmin
         .from("invites")
         .update({
           status: "CANCELLED",
+          cancelled_at: new Date().toISOString(),
         })
         .eq("invite_id", invitation.invite_id)
         .eq("status", "PENDING");
@@ -196,17 +182,41 @@ const inviteEmployee = async (req, res) => {
 
       return res.status(400).json({
         success: false,
-        message: inviteError.message,
+        message: inviteError?.message || "Could not create Auth user.",
       });
     }
 
-    // STEP 11: Return successful response.
+    // STEP 11: Get the Supabase Auth user ID.
+    const authUserId = invitedUser.user.id;
+
+    // STEP 12: Link the Auth user to the invitation record.
+    const { data: updatedInvitation, error: authLinkError } =
+      await supabaseAdmin
+        .from("invites")
+        .update({
+          auth_user_id: authUserId,
+          last_sent_at: new Date().toISOString(),
+        })
+        .eq("invite_id", invitation.invite_id)
+        .select()
+        .single();
+
+    // Handle database linking failure.
+    if (authLinkError) {
+      console.error("Auth user linking error:", authLinkError);
+
+      return res.status(500).json({
+        success: false,
+        message: "Invitation was sent, but Auth user linking failed.",
+      });
+    }
+
+    // STEP 13: Return the updated invitation.
     return res.status(201).json({
       success: true,
       message: "Employee invitation sent successfully.",
-
       data: {
-        invitation,
+        invitation: updatedInvitation,
         invitedUser: invitedUser.user,
       },
     });
@@ -227,9 +237,9 @@ const inviteEmployee = async (req, res) => {
 // 1. Verify the Supabase invitation access token.
 // 2. Validate the employee's name and password.
 // 3. Find and validate the pending invitation.
-// 4. Set the employee's password through Supabase Admin.
-// 5. Create the employee's application profile.
-// 6. Mark the invitation as ACCEPTED.
+// 4. Update the Supabase Auth password and user metadata.
+// 5. Create or validate the employee's application profile.
+// 6. Mark the invitation as ACCEPTED and link the Auth user ID.
 // -------------------------------------------------------------
 
 const acceptInvite = async (req, res) => {
@@ -316,12 +326,12 @@ const acceptInvite = async (req, res) => {
     }
 
     // STEP 5: Handle retries if the invitation was already accepted.
-    // This prevents a completed invitation from being processed again.
+    // This supports recovery if an earlier request partially completed.
     if (!pendingInvitations || pendingInvitations.length === 0) {
       const { data: existingUser, error: existingUserError } =
         await supabaseAdmin
           .from("users")
-          .select("user_id, organization_id, name, email, role")
+          .select("user_id, organization_id, name, email, role, created_at")
           .eq("user_id", authUser.id)
           .maybeSingle();
 
@@ -334,11 +344,12 @@ const acceptInvite = async (req, res) => {
         });
       }
 
+      // Check whether the authenticated user already has an application profile.
       if (existingUser && existingUser.email?.toLowerCase() === email) {
         const { data: acceptedInvitation, error: acceptedLookupError } =
           await supabaseAdmin
             .from("invites")
-            .select("invite_id, status, organization_id")
+            .select("*")
             .ilike("email", email)
             .eq("organization_id", existingUser.organization_id)
             .eq("status", "ACCEPTED")
@@ -359,12 +370,56 @@ const acceptInvite = async (req, res) => {
         }
 
         if (acceptedInvitation) {
+          // Repair Auth metadata if a previous acceptance did not save it.
+          const { data: repairedAuthUser, error: metadataRepairError } =
+            await supabaseAdmin.auth.admin.updateUserById(authUser.id, {
+              user_metadata: {
+                ...(authUser.user_metadata || {}),
+                name: existingUser.name,
+              },
+            });
+
+          if (metadataRepairError || !repairedAuthUser.user) {
+            console.error("Auth metadata repair error:", metadataRepairError);
+
+            return res.status(500).json({
+              success: false,
+              message: "Could not update the Auth user name.",
+            });
+          }
+
+          // Repair the invitation's Auth user ID if it is missing.
+          let finalAcceptedInvitation = acceptedInvitation;
+
+          if (!acceptedInvitation.auth_user_id) {
+            const { data: repairedInvitation, error: linkError } =
+              await supabaseAdmin
+                .from("invites")
+                .update({
+                  auth_user_id: authUser.id,
+                })
+                .eq("invite_id", acceptedInvitation.invite_id)
+                .select("*")
+                .single();
+
+            if (linkError) {
+              console.error("Invitation Auth ID repair error:", linkError);
+
+              return res.status(500).json({
+                success: false,
+                message: "Could not link the Auth user to the invitation.",
+              });
+            }
+
+            finalAcceptedInvitation = repairedInvitation;
+          }
+
           return res.status(200).json({
             success: true,
             message: "Invitation has already been accepted.",
             data: {
               user: existingUser,
-              invitation: acceptedInvitation,
+              invitation: finalAcceptedInvitation,
             },
           });
         }
@@ -394,7 +449,9 @@ const acceptInvite = async (req, res) => {
     ) {
       const { error: expiryUpdateError } = await supabaseAdmin
         .from("invites")
-        .update({ status: "EXPIRED" })
+        .update({
+          status: "EXPIRED",
+        })
         .eq("invite_id", invitation.invite_id)
         .eq("status", "PENDING");
 
@@ -414,27 +471,33 @@ const acceptInvite = async (req, res) => {
       });
     }
 
-    // STEP 7: Set the employee's password in Supabase Auth.
+    // STEP 7: Update Supabase Auth password and user metadata.
     // The user ID comes from the verified access token.
     // The service-role client is used only on the backend.
-    const { data: passwordData, error: passwordError } =
-      await supabaseAdmin.auth.admin.updateUserById(authUser.id, { password });
+    const { data: updatedAuthData, error: authUpdateError } =
+      await supabaseAdmin.auth.admin.updateUserById(authUser.id, {
+        password,
+        user_metadata: {
+          ...(authUser.user_metadata || {}),
+          name,
+        },
+      });
 
-    if (passwordError || !passwordData.user) {
-      console.error("Password update error:", passwordError);
+    if (authUpdateError || !updatedAuthData.user) {
+      console.error("Auth user update error:", authUpdateError);
 
       return res.status(400).json({
         success: false,
         message:
-          passwordError?.message || "Could not set the account password.",
+          authUpdateError?.message || "Could not update the Auth account.",
       });
     }
 
     // STEP 8: Check whether an application profile already exists.
-    // This supports retrying if an earlier request partially completed.
+    // This supports retries if an earlier request partially completed.
     const { data: existingUser, error: existingUserError } = await supabaseAdmin
       .from("users")
-      .select("user_id, organization_id, name, email, role")
+      .select("user_id, organization_id, name, email, role, created_at")
       .eq("user_id", authUser.id)
       .maybeSingle();
 
@@ -461,7 +524,7 @@ const acceptInvite = async (req, res) => {
         });
       }
 
-      // Keep the existing profile and role unchanged on a retry.
+      // Keep the existing application profile and role unchanged on a retry.
     } else {
       // STEP 9: Create the application profile.
       // Organization and role are taken from the trusted invitation.
@@ -484,7 +547,7 @@ const acceptInvite = async (req, res) => {
         const { data: concurrentUser, error: retryLookupError } =
           await supabaseAdmin
             .from("users")
-            .select("user_id, organization_id, name, email, role")
+            .select("user_id, organization_id, name, email, role, created_at")
             .eq("user_id", authUser.id)
             .maybeSingle();
 
@@ -509,8 +572,8 @@ const acceptInvite = async (req, res) => {
       }
     }
 
-    // STEP 10: Mark the invitation as accepted only after
-    // the application profile has been confirmed.
+    // STEP 10: Mark the invitation as accepted and link the Auth user ID.
+    // Both values are updated together in the same database update.
     const acceptedAt = new Date().toISOString();
 
     const { data: updatedInvitation, error: updateInviteError } =
@@ -519,6 +582,7 @@ const acceptInvite = async (req, res) => {
         .update({
           status: "ACCEPTED",
           accepted_at: acceptedAt,
+          auth_user_id: authUser.id,
         })
         .eq("invite_id", invitation.invite_id)
         .eq("status", "PENDING")
@@ -563,7 +627,32 @@ const acceptInvite = async (req, res) => {
         });
       }
 
-      finalInvitation = currentInvitation;
+      // Repair the Auth user ID if another request accepted the invitation
+      // but did not link the Auth ID.
+      if (!currentInvitation.auth_user_id) {
+        const { data: repairedInvitation, error: linkError } =
+          await supabaseAdmin
+            .from("invites")
+            .update({
+              auth_user_id: authUser.id,
+            })
+            .eq("invite_id", currentInvitation.invite_id)
+            .select("*")
+            .single();
+
+        if (linkError) {
+          console.error("Concurrent invitation link error:", linkError);
+
+          return res.status(500).json({
+            success: false,
+            message: "Could not link the Auth user to the invitation.",
+          });
+        }
+
+        finalInvitation = repairedInvitation;
+      } else {
+        finalInvitation = currentInvitation;
+      }
     }
 
     // STEP 11: Return successful invitation acceptance.
@@ -576,6 +665,7 @@ const acceptInvite = async (req, res) => {
       },
     });
   } catch (error) {
+    // Log unexpected errors without exposing internal details to the client.
     console.error("Accept invitation error:", error);
 
     return res.status(500).json({
@@ -584,7 +674,6 @@ const acceptInvite = async (req, res) => {
     });
   }
 };
-
 /**
  * RESEND INVITATION
  * Allows an organization ADMIN to resend an eligible invitation.
@@ -755,11 +844,13 @@ const resendInvite = async (req, res) => {
 };
 // GET ALL INVITATIONS
 // Allows an ADMIN to view invitation history for their organization.
+// Frontend handles pagination; backend returns the complete filtered list.
 const getInvitations = async (req, res) => {
   try {
     // STEP 1: Get the authenticated user from the authentication middleware.
     const currentUser = req.user;
 
+    // Ensure the user is authenticated.
     if (!currentUser) {
       return res.status(401).json({
         success: false,
@@ -775,12 +866,19 @@ const getInvitations = async (req, res) => {
       });
     }
 
-    // STEP 3: Read optional search, status, and pagination parameters.
-    const search = (req.query.search || "").trim();
-    const requestedStatus = (req.query.status || "").toUpperCase();
+    // STEP 3: Read optional search and status parameters.
+    const search =
+      typeof req.query.search === "string" ? req.query.search.trim() : "";
 
+    const requestedStatus =
+      typeof req.query.status === "string"
+        ? req.query.status.trim().toUpperCase()
+        : "";
+
+    // Define the statuses supported by this API.
     const allowedStatuses = ["PENDING", "ACCEPTED", "EXPIRED", "CANCELLED"];
 
+    // Validate the requested status.
     if (requestedStatus && !allowedStatuses.includes(requestedStatus)) {
       return res.status(400).json({
         success: false,
@@ -789,48 +887,39 @@ const getInvitations = async (req, res) => {
       });
     }
 
-    // Default to 10 invitations per page; limit the maximum to 100.
-    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(
-      100,
-      Math.max(1, parseInt(req.query.limit, 10) || 10),
-    );
-
-    const from = (page - 1) * limit;
-    const to = from + limit - 1;
-
-    // Use one timestamp consistently for expiry checks in this request.
+    // Use one timestamp consistently for expiry checks.
     const now = new Date().toISOString();
 
     // STEP 4: Prepare the invitation list query.
-    // Always restrict the results to the authenticated ADMIN's organization.
+    // Always restrict invitations to the authenticated ADMIN's organization.
     let invitationQuery = supabaseAdmin
       .from("invites")
       .select(
         `
-          invite_id,
-          organization_id,
-          email,
-          role,
-          invited_by,
-          status,
-          created_at,
-          last_sent_at,
-          resend_count,
-          expires_at,
-          accepted_at
-        `,
-        { count: "exact" },
+        invite_id,
+        organization_id,
+        email,
+        role,
+        invited_by,
+        status,
+        created_at,
+        last_sent_at,
+        resend_count,
+        expires_at,
+        accepted_at,
+        auth_user_id,
+        cancelled_at
+      `,
       )
       .eq("organization_id", currentUser.organization_id);
 
-    // STEP 5: Apply the optional email search.
+    // STEP 5: Apply optional email search.
     if (search) {
       invitationQuery = invitationQuery.ilike("email", `%${search}%`);
     }
 
     // STEP 6: Apply the optional status filter.
-    // A pending invitation whose expiry time has passed is treated as EXPIRED.
+    // Pending invitations whose expiry time has passed are treated as EXPIRED.
     if (requestedStatus === "EXPIRED") {
       invitationQuery = invitationQuery.or(
         `status.eq.EXPIRED,and(status.eq.PENDING,expires_at.lte.${now})`,
@@ -843,15 +932,14 @@ const getInvitations = async (req, res) => {
       invitationQuery = invitationQuery.eq("status", requestedStatus);
     }
 
-    // STEP 7: Fetch the requested page, newest invitations first.
-    const {
-      data: invitations,
-      error: invitationsError,
-      count: filteredCount,
-    } = await invitationQuery
-      .order("created_at", { ascending: false })
-      .range(from, to);
+    // STEP 7: Retrieve all matching invitations.
+    // No .range() or pagination is used here.
+    const { data: invitations, error: invitationsError } =
+      await invitationQuery.order("created_at", {
+        ascending: false,
+      });
 
+    // Handle invitation retrieval errors.
     if (invitationsError) {
       console.error("Get invitations error:", invitationsError);
 
@@ -862,7 +950,8 @@ const getInvitations = async (req, res) => {
     }
 
     // STEP 8: Normalize expired invitations in the response.
-    // This does not update the database status.
+    // A pending invitation past its expiry date is displayed as EXPIRED.
+    // This does not update the actual database status.
     const normalizedInvitations = (invitations || []).map((invitation) => {
       const isExpired =
         invitation.status === "EXPIRED" ||
@@ -875,14 +964,17 @@ const getInvitations = async (req, res) => {
       };
     });
 
-    // STEP 9: Count all invitations belonging to this organization.
-    // These counts cover the whole organization, not just the current page.
+    // STEP 9: Create a reusable query for organization-wide counts.
     const countQuery = () =>
       supabaseAdmin
         .from("invites")
-        .select("invite_id", { count: "exact", head: true })
+        .select("invite_id", {
+          count: "exact",
+          head: true,
+        })
         .eq("organization_id", currentUser.organization_id);
 
+    // STEP 10: Retrieve all summary counts concurrently.
     const [
       totalResult,
       pendingResult,
@@ -890,25 +982,25 @@ const getInvitations = async (req, res) => {
       expiredResult,
       cancelledResult,
     ] = await Promise.all([
-      // Total invitations in every status.
+      // Count all invitations in this organization.
       countQuery(),
 
-      // Pending invitations that have not expired.
+      // Count pending invitations that have not expired.
       countQuery().eq("status", "PENDING").gt("expires_at", now),
 
-      // Invitations accepted by employees.
+      // Count accepted invitations.
       countQuery().eq("status", "ACCEPTED"),
 
-      // Explicitly expired invitations plus pending invitations past expiry.
+      // Count explicitly expired and expired-pending invitations.
       countQuery().or(
         `status.eq.EXPIRED,and(status.eq.PENDING,expires_at.lte.${now})`,
       ),
 
-      // Invitations cancelled by the application.
+      // Count cancelled invitations.
       countQuery().eq("status", "CANCELLED"),
     ]);
 
-    // STEP 10: Check for summary-query errors.
+    // STEP 11: Check for summary-query errors.
     const summaryResults = [
       totalResult,
       pendingResult,
@@ -928,7 +1020,8 @@ const getInvitations = async (req, res) => {
       });
     }
 
-    // STEP 11: Return the invitation list, summary, and pagination metadata.
+    // STEP 12: Return the invitation list and organization-wide summary.
+    // Pagination is handled by the frontend.
     return res.status(200).json({
       success: true,
       message: "Invitations retrieved successfully.",
@@ -941,17 +1034,10 @@ const getInvitations = async (req, res) => {
         cancelledInvitations: cancelledResult.count || 0,
       },
 
-      pagination: {
-        page,
-        limit,
-        totalRecords: filteredCount || 0,
-        totalPages: Math.ceil((filteredCount || 0) / limit),
-      },
-
       data: normalizedInvitations,
     });
   } catch (error) {
-    // Log unexpected errors without exposing internal details to the client.
+    // Log unexpected errors without exposing internal details.
     console.error("Get invitations controller error:", error);
 
     return res.status(500).json({
@@ -982,7 +1068,7 @@ const deleteInvite = async (req, res) => {
     }
 
     // STEP 2: Get invitation ID.
-    const { inviteId } = req.body;
+    const { inviteId } = req.params;
 
     if (!inviteId) {
       return res.status(400).json({

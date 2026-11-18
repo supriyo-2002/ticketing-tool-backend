@@ -1,12 +1,14 @@
 const express = require("express");
 const router = express.Router();
+
 const inviteControllers = require("../controllers/inviteControllers");
 const authMiddleware = require("../middleware/authMiddleware");
+
 /**
  * @swagger
  * tags:
- *   name: Invite
- *   description: Invite employee APIs
+ *   - name: Invitations
+ *     description: Employee invitation management APIs
  */
 
 /**
@@ -15,7 +17,7 @@ const authMiddleware = require("../middleware/authMiddleware");
  *   post:
  *     summary: Invite an employee
  *     description: Allows an ADMIN to invite a new user to their organization.
- *     tags: [Invite]
+ *     tags: [Invitations]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -40,31 +42,33 @@ const authMiddleware = require("../middleware/authMiddleware");
  *                 example: EMPLOYEE
  *     responses:
  *       201:
- *         description: Employee invitation sent successfully
+ *         description: Invitation sent successfully
  *       400:
- *         description: Invalid request
+ *         description: Validation error
  *       401:
- *         description: Authentication required or invalid token
+ *         description: Authentication required
  *       403:
- *         description: Only ADMIN users can invite employees
+ *         description: ADMIN access required
  *       409:
- *         description: User or pending invitation already exists
+ *         description: User or invitation already exists
  *       500:
- *         description: Server error
+ *         description: Internal server error
  */
 router.post(
     "/invite",
     authMiddleware,
     inviteControllers.inviteEmployee
 );
-
 /**
  * @swagger
  * /api/auth/accept-invite:
  *   post:
- *     summary: Accept an employee invitation
- *     description: Completes the invitation process and creates the user's organization profile.
- *     tags: [Invite]
+ *     summary: Accept invitation
+ *     description: >
+ *       Completes the employee onboarding process.
+ *       The invited user must be authenticated through the
+ *       Supabase invitation link and provide their name and password.
+ *     tags: [Invitations]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -75,34 +79,56 @@ router.post(
  *             type: object
  *             required:
  *               - name
+ *               - password
  *             properties:
  *               name:
  *                 type: string
+ *                 maxLength: 120
  *                 example: John Doe
+ *               password:
+ *                 type: string
+ *                 format: password
+ *                 minLength: 8
+ *                 example: Password123
  *     responses:
- *       201:
+ *       200:
  *         description: Invitation accepted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Invitation accepted successfully.
+ *       400:
+ *         description: Invalid name or password
  *       401:
- *         description: Invalid or missing access token
+ *         description: Invalid or expired invitation token
  *       404:
  *         description: No pending invitation found
  *       409:
- *         description: User profile already exists
+ *         description: User profile already exists or invitation conflict detected
  *       410:
  *         description: Invitation has expired
+ *       500:
+ *         description: Internal server error
  */
 router.post(
     "/accept-invite",
     inviteControllers.acceptInvite
 );
 
-
 /**
  * @swagger
  * /api/auth/resend-invite/{inviteId}:
  *   post:
- *     summary: Resend an employee invitation
- *     tags: [Invite]
+ *     summary: Resend an invitation
+ *     description: Resends a pending invitation email.
+ *     tags: [Invitations]
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -112,22 +138,22 @@ router.post(
  *         schema:
  *           type: string
  *           format: uuid
- *         description: ID of the invitation to resend
+ *         example: 550e8400-e29b-41d4-a716-446655440000
  *     responses:
  *       200:
- *         description: Invitation email resend request succeeded
- *       400:
- *         description: Supabase rejected the invitation request
+ *         description: Invitation resent successfully
  *       401:
  *         description: Authentication required
  *       403:
- *         description: Admin role required
+ *         description: ADMIN access required
  *       404:
  *         description: Invitation not found
  *       409:
  *         description: Invitation cannot be resent
  *       429:
- *         description: Resend cooldown has not elapsed
+ *         description: Cooldown period active
+ *       500:
+ *         description: Internal server error
  */
 router.post(
     "/resend-invite/:inviteId",
@@ -139,133 +165,40 @@ router.post(
  * @swagger
  * /api/auth/invitations:
  *   get:
- *     summary: Get invitation history and summary
- *     description: >
- *       Retrieves invitations belonging to the logged-in ADMIN's organization,
- *       including email, role, status, invitation time, expiry time,
- *       acceptance time, and resend information.
+ *     summary: Get invitation history
+ *     description: Returns all invitations for the authenticated ADMIN's organization. Supports optional status filtering and email search. Frontend handles pagination.
  *     tags: [Invitations]
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: query
  *         name: status
+ *         required: false
  *         schema:
  *           type: string
- *           enum: [PENDING, ACCEPTED, EXPIRED, CANCELLED]
- *         description: Filter invitations by status
+ *           enum:
+ *             - PENDING
+ *             - ACCEPTED
+ *             - EXPIRED
+ *             - CANCELLED
+ *         description: Filter invitations by status. Leave empty to retrieve all statuses.
  *       - in: query
  *         name: search
+ *         required: false
  *         schema:
  *           type: string
- *         description: Search invitation email addresses
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           default: 1
- *           minimum: 1
- *         description: Page number
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 10
- *           minimum: 1
- *           maximum: 100
- *         description: Number of invitations per page
+ *         description: Optional search by email address. Leave empty to retrieve all invitations.
  *     responses:
  *       200:
- *         description: Invitation history retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: Invitations retrieved successfully.
- *                 summary:
- *                   type: object
- *                   properties:
- *                     totalInvitations:
- *                       type: integer
- *                       example: 25
- *                     pendingInvitations:
- *                       type: integer
- *                       example: 8
- *                     acceptedInvitations:
- *                       type: integer
- *                       example: 12
- *                     expiredInvitations:
- *                       type: integer
- *                       example: 3
- *                     cancelledInvitations:
- *                       type: integer
- *                       example: 2
- *                 pagination:
- *                   type: object
- *                   properties:
- *                     page:
- *                       type: integer
- *                       example: 1
- *                     limit:
- *                       type: integer
- *                       example: 10
- *                     totalRecords:
- *                       type: integer
- *                       example: 25
- *                     totalPages:
- *                       type: integer
- *                       example: 3
- *                 data:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       invite_id:
- *                         type: string
- *                         format: uuid
- *                       organization_id:
- *                         type: string
- *                         format: uuid
- *                       email:
- *                         type: string
- *                         format: email
- *                       role:
- *                         type: string
- *                         enum: [ADMIN, EMPLOYEE]
- *                       invited_by:
- *                         type: string
- *                         format: uuid
- *                       status:
- *                         type: string
- *                         enum: [PENDING, ACCEPTED, EXPIRED, CANCELLED]
- *                       created_at:
- *                         type: string
- *                         format: date-time
- *                       last_sent_at:
- *                         type: string
- *                         format: date-time
- *                         nullable: true
- *                       resend_count:
- *                         type: integer
- *                       expires_at:
- *                         type: string
- *                         format: date-time
- *                       accepted_at:
- *                         type: string
- *                         format: date-time
- *                         nullable: true
+ *         description: Invitation history retrieved successfully.
+ *       400:
+ *         description: Invalid status filter.
  *       401:
- *         description: Authentication required
+ *         description: Authentication required.
  *       403:
- *         description: Only ADMIN users can view invitation history
+ *         description: ADMIN access required.
  *       500:
- *         description: Internal server error
+ *         description: Internal server error.
  */
 router.get(
     "/invitations",
@@ -273,70 +206,43 @@ router.get(
     inviteControllers.getInvitations
 );
 
-
 /**
  * @swagger
- * /api/invites:
+ * /api/auth/invite/{inviteId}:
  *   delete:
- *     summary: Delete an unaccepted invitation
- *     description: >
- *       Allows an ADMIN to permanently delete a PENDING, EXPIRED,
- *       or CANCELLED invitation from their organization.
- *       Accepted invitations cannot be deleted.
- *       If an unconfirmed Supabase Auth account is linked to
- *       the invitation, that Auth account is also deleted.
- *     tags:
- *       - Invitations
+ *     summary: Delete invitation
+ *     description: Deletes an unaccepted invitation. Accepted invitations cannot be deleted.
+ *     tags: [Invitations]
  *     security:
  *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - inviteId
- *             properties:
- *               inviteId:
- *                 type: string
- *                 format: uuid
- *                 description: ID of the invitation to delete
- *                 example: 550e8400-e29b-41d4-a716-446655440000
+ *     parameters:
+ *       - in: path
+ *         name: inviteId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         example: 550e8400-e29b-41d4-a716-446655440000
  *     responses:
  *       200:
- *         description: Invitation and its unconfirmed Auth account deleted successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: Invitation and its unconfirmed Auth account deleted successfully.
- *                 data:
- *                   type: object
- *                   properties:
- *                     invite_id:
- *                       type: string
- *                       format: uuid
+ *         description: Invitation deleted successfully
  *       400:
- *         description: Invitation ID is missing
+ *         description: Invalid invitation id
  *       401:
  *         description: Authentication required
  *       403:
- *         description: Only ADMIN users can delete invitations
+ *         description: ADMIN access required
  *       404:
  *         description: Invitation not found
  *       409:
- *         description: Accepted invitation or linked confirmed Auth account cannot be deleted
+ *         description: Accepted invitation cannot be deleted
  *       500:
  *         description: Internal server error
  */
-router.delete("/", authMiddleware, inviteControllers.deleteInvite);
-
+router.delete(
+    "/invite/:inviteId",
+    authMiddleware,
+    inviteControllers.deleteInvite
+);
 
 module.exports = router;
