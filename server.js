@@ -18,6 +18,7 @@ const dashboardRoutes = require("./routes/dashboardRoutes");
 const statusRoutes = require("./routes/statusRoutes");
 const priorityRoutes = require("./routes/priorityRoutes");
 const profileRoutes = require("./routes/profileRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
 // Initialize the Express application.
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -52,6 +53,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/statuses", statusRoutes);
 app.use("/api/priorities", priorityRoutes);
 app.use("/api/profile", profileRoutes);
+app.use("/api/notifications", notificationRoutes);
 // Health-check endpoint.
 app.get("/", (req, res) => {
     res.status(200).json({

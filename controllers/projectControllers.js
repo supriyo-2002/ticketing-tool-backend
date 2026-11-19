@@ -1,5 +1,7 @@
 const { supabaseAdmin } = require("../config/supabase");
 
+const { createNotifications } = require("../services/notificationService");
+
 // GET ALL PROJECT STATUSES
 // Fetches available project statuses for the Create Project form.
 const getProjectStatuses = async (req, res) => {
@@ -228,6 +230,26 @@ const createProject = async (req, res) => {
       .insert(membershipRecords)
       .select();
 
+    // Send notifications to employees selected for this project.
+    const notificationResult = await createNotifications({
+      organizationId: organization_id,
+      senderId: user_id,
+      recipientIds: member_ids,
+      type: "PROJECT_ADDED",
+      title: "Added to a project",
+      message: `You have been added to the ${project.name} project.`,
+      referenceType: "PROJECT",
+      referenceId: project.project_id,
+    });
+
+    // Do not fail project creation if notification creation fails.
+    if (!notificationResult.success) {
+      console.error(
+        "Project created, but notifications could not be created:",
+        notificationResult.error,
+      );
+    }
+
     if (membershipError) {
       console.error(
         "Project membership creation error:",
@@ -373,7 +395,8 @@ const getProjects = async (req, res) => {
     // STEP 2: Retrieve projects with their related status name.
     const { data: projects, error: projectError } = await supabaseAdmin
       .from("projects")
-      .select(`
+      .select(
+        `
         project_id,
         name,
         description,
@@ -382,7 +405,8 @@ const getProjects = async (req, res) => {
         project_status (
           name
         )
-      `)
+      `,
+      )
       .eq("organization_id", organization_id)
       .order("created_at", { ascending: false });
 
@@ -428,7 +452,6 @@ const getProjects = async (req, res) => {
       count: projectsWithMembers.length,
       data: projectsWithMembers,
     });
-
   } catch (error) {
     // Handle unexpected errors.
     console.error("Unexpected get projects error:", error.message);
@@ -472,7 +495,8 @@ const getProjectById = async (req, res) => {
     // while ensuring it belongs to the authenticated organization.
     const { data: project, error: projectError } = await supabaseAdmin
       .from("projects")
-      .select(`
+      .select(
+        `
         project_id,
         name,
         description,
@@ -481,7 +505,8 @@ const getProjectById = async (req, res) => {
         project_status (
           name
         )
-      `)
+      `,
+      )
       .eq("project_id", projectId)
       .eq("organization_id", organization_id)
       .maybeSingle();
@@ -532,7 +557,6 @@ const getProjectById = async (req, res) => {
       message: "Project retrieved successfully.",
       data: projectsWithMembers[0],
     });
-
   } catch (error) {
     // Handle unexpected errors.
     console.error("Unexpected get project by ID error:", error.message);
@@ -620,9 +644,7 @@ const updateProject = async (req, res) => {
     if (
       member_ids !== undefined &&
       (!Array.isArray(member_ids) ||
-        !member_ids.every(
-          (id) => typeof id === "string" && uuidRegex.test(id)
-        ))
+        !member_ids.every((id) => typeof id === "string" && uuidRegex.test(id)))
     ) {
       return res.status(400).json({
         success: false,
@@ -633,7 +655,8 @@ const updateProject = async (req, res) => {
     // Find the project inside the authenticated organization.
     const { data: existingProject, error: findError } = await supabaseAdmin
       .from("projects")
-      .select(`
+      .select(
+        `
         project_id,
         name,
         description,
@@ -643,7 +666,8 @@ const updateProject = async (req, res) => {
         project_status (
           name
         )
-      `)
+      `,
+      )
       .eq("project_id", projectId)
       .eq("organization_id", organization_id)
       .maybeSingle();
@@ -675,9 +699,7 @@ const updateProject = async (req, res) => {
 
     if (description !== undefined) {
       updateData.description =
-        typeof description === "string"
-          ? description.trim() || null
-          : null;
+        typeof description === "string" ? description.trim() || null : null;
     }
 
     // Validate the supplied status ID against the project_status table.
@@ -729,7 +751,7 @@ const updateProject = async (req, res) => {
       if (validationError) {
         console.error(
           "Validate project members error:",
-          validationError.message
+          validationError.message,
         );
 
         return res.status(500).json({
@@ -740,12 +762,12 @@ const updateProject = async (req, res) => {
 
       // Collect the valid organization user IDs.
       const validMemberIds = new Set(
-        (organizationUsers || []).map((user) => user.user_id)
+        (organizationUsers || []).map((user) => user.user_id),
       );
 
       // Identify invalid or external organization members.
       const invalidMemberIds = desiredMemberIds.filter(
-        (id) => !validMemberIds.has(id)
+        (id) => !validMemberIds.has(id),
       );
 
       if (invalidMemberIds.length > 0) {
@@ -767,7 +789,8 @@ const updateProject = async (req, res) => {
         .update(updateData)
         .eq("project_id", projectId)
         .eq("organization_id", organization_id)
-        .select(`
+        .select(
+          `
           project_id,
           name,
           description,
@@ -777,7 +800,8 @@ const updateProject = async (req, res) => {
           project_status (
             name
           )
-        `)
+        `,
+        )
         .maybeSingle();
 
       // Handle project update errors.
@@ -800,7 +824,8 @@ const updateProject = async (req, res) => {
 
       updatedProject = project;
     }
-
+    // Store IDs of employees newly added to this project.
+    let newlyAddedMemberIds = [];
     // Synchronize project members only when member_ids is supplied.
     if (desiredMemberIds !== null) {
       // Retrieve the current project memberships.
@@ -813,7 +838,7 @@ const updateProject = async (req, res) => {
       if (currentMembersError) {
         console.error(
           "Get current project members error:",
-          currentMembersError.message
+          currentMembersError.message,
         );
 
         return res.status(500).json({
@@ -824,17 +849,20 @@ const updateProject = async (req, res) => {
 
       // Convert current memberships into a Set.
       const currentMemberIds = new Set(
-        (currentMemberships || []).map((membership) => membership.user_id)
+        (currentMemberships || []).map((membership) => membership.user_id),
       );
 
       // Identify members who need to be added.
       const membersToAdd = desiredMemberIds.filter(
-        (id) => !currentMemberIds.has(id)
+        (id) => !currentMemberIds.has(id),
       );
+
+      // Keep the newly added employee IDs for notifications.
+      newlyAddedMemberIds = membersToAdd;
 
       // Identify members who need to be removed.
       const membersToRemove = [...currentMemberIds].filter(
-        (id) => !desiredMemberIds.includes(id)
+        (id) => !desiredMemberIds.includes(id),
       );
 
       // Add new members before removing existing members.
@@ -869,7 +897,7 @@ const updateProject = async (req, res) => {
         if (removeMembersError) {
           console.error(
             "Remove project members error:",
-            removeMembersError.message
+            removeMembersError.message,
           );
 
           return res.status(500).json({
@@ -877,6 +905,28 @@ const updateProject = async (req, res) => {
             message: "Failed to remove project members.",
           });
         }
+      }
+    }
+
+    // Send notifications only to employees newly added to the project.
+    if (newlyAddedMemberIds.length > 0) {
+      const notificationResult = await createNotifications({
+        organizationId: organization_id,
+        senderId: req.user.user_id,
+        recipientIds: newlyAddedMemberIds,
+        type: "PROJECT_ADDED",
+        title: "Added to a project",
+        message: `You have been added to the ${updatedProject.name} project.`,
+        referenceType: "PROJECT",
+        referenceId: updatedProject.project_id,
+      });
+
+      // Notification failure should not affect project updates.
+      if (!notificationResult.success) {
+        console.error(
+          "Project updated, but notifications could not be created:",
+          notificationResult.error,
+        );
       }
     }
 
@@ -896,7 +946,7 @@ const updateProject = async (req, res) => {
     if (memberError) {
       console.error(
         "Retrieve updated project members error:",
-        memberError.message
+        memberError.message,
       );
 
       return res.status(500).json({
@@ -911,7 +961,6 @@ const updateProject = async (req, res) => {
       message: "Project updated successfully.",
       data: projectsWithMembers[0],
     });
-
   } catch (error) {
     // Handle unexpected errors.
     console.error("Unexpected update project error:", error.message);
