@@ -1,3 +1,4 @@
+
 // Import the Supabase admin client.
 const { supabaseAdmin } = require("../config/supabase");
 
@@ -18,12 +19,17 @@ const getMyProfile = async (req, res) => {
         }
 
         // STEP 3: Fetch the logged-in user's profile.
+        // Include account_status to show whether the account is ACTIVE,
+        // INACTIVE, or SUSPENDED.
         // Restrict the query to the user's own organization as an additional
         // tenant-isolation safeguard.
-        const { data: user, error: userError } = await supabaseAdmin
+        const {
+            data: user,
+            error: userError
+        } = await supabaseAdmin
             .from("users")
             .select(
-                "user_id, organization_id, name, email, role, created_at"
+                "user_id, organization_id, name, email, role, account_status, created_at"
             )
             .eq("user_id", user_id)
             .eq("organization_id", organization_id)
@@ -48,12 +54,14 @@ const getMyProfile = async (req, res) => {
         }
 
         // STEP 6: Fetch the organization name.
-        const { data: organization, error: organizationError } =
-            await supabaseAdmin
-                .from("organizations")
-                .select("organization_id, name")
-                .eq("organization_id", user.organization_id)
-                .maybeSingle();
+        const {
+            data: organization,
+            error: organizationError
+        } = await supabaseAdmin
+            .from("organizations")
+            .select("organization_id, name")
+            .eq("organization_id", user.organization_id)
+            .maybeSingle();
 
         // STEP 7: Handle organization lookup errors.
         if (organizationError) {
@@ -77,11 +85,13 @@ const getMyProfile = async (req, res) => {
                 name: user.name,
                 email: user.email,
                 role: user.role,
+                account_status: user.account_status,
                 organization_id: user.organization_id,
                 organization_name: organization?.name || null,
                 created_at: user.created_at,
             },
         });
+
     } catch (error) {
         // Handle unexpected server errors.
         console.error("Get profile error:", error.message);
@@ -111,7 +121,7 @@ const updateMyProfile = async (req, res) => {
 
         // STEP 3: Accept only the name field.
         // This prevents users from changing their role, email, organization,
-        // or user ID through this endpoint.
+        // account status, or user ID through this endpoint.
         const allowedFields = ["name"];
         const requestFields = Object.keys(req.body || {});
 
@@ -148,22 +158,27 @@ const updateMyProfile = async (req, res) => {
 
         // STEP 5: Update only the authenticated user's profile.
         // Both IDs are included to maintain organization isolation.
-        const { data: updatedUser, error: updateError } =
-            await supabaseAdmin
-                .from("users")
-                .update({
-                    name: updatedName,
-                })
-                .eq("user_id", user_id)
-                .eq("organization_id", organization_id)
-                .select(
-                    "user_id, organization_id, name, email, role, created_at"
-                )
-                .maybeSingle();
+        const {
+            data: updatedUser,
+            error: updateError
+        } = await supabaseAdmin
+            .from("users")
+            .update({
+                name: updatedName,
+            })
+            .eq("user_id", user_id)
+            .eq("organization_id", organization_id)
+            .select(
+                "user_id, organization_id, name, email, role, account_status, created_at"
+            )
+            .maybeSingle();
 
         // STEP 6: Handle database errors.
         if (updateError) {
-            console.error("Update profile database error:", updateError.message);
+            console.error(
+                "Update profile database error:",
+                updateError.message
+            );
 
             return res.status(500).json({
                 success: false,
@@ -188,10 +203,12 @@ const updateMyProfile = async (req, res) => {
                 name: updatedUser.name,
                 email: updatedUser.email,
                 role: updatedUser.role,
+                account_status: updatedUser.account_status,
                 organization_id: updatedUser.organization_id,
                 created_at: updatedUser.created_at,
             },
         });
+
     } catch (error) {
         // Handle unexpected server errors.
         console.error("Update profile error:", error.message);
