@@ -167,6 +167,7 @@ router.post(
     authMiddleware,
     authController.logout
 );
+
 // -------------------------------------------------------------
 // FORGOT PASSWORD API
 // -------------------------------------------------------------
@@ -205,12 +206,13 @@ router.post(
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: If an account exists for this email, a password reset link will be sent.
+ *                   example: If an account exists for this email, a password reset email will be sent.
  *       400:
  *         description: Missing or invalid email address.
  *       500:
  *         description: Unable to process the password recovery request.
  */
+
 router.post("/forgot-password", authController.forgotPassword);
 
 
@@ -223,7 +225,7 @@ router.post("/forgot-password", authController.forgotPassword);
  * /api/auth/reset-password:
  *   post:
  *     summary: Reset an employee's password
- *     description: Verifies the Supabase recovery token and updates the employee's password.
+ *     description: Establishes a temporary Supabase session using the recovery access token and refresh token received from the password recovery email, then updates the employee's password.
  *     tags:
  *       - Authentication
  *     requestBody:
@@ -233,23 +235,30 @@ router.post("/forgot-password", authController.forgotPassword);
  *           schema:
  *             type: object
  *             required:
- *               - token_hash
+ *               - access_token
+ *               - refresh_token
  *               - password
  *               - confirmPassword
  *             properties:
- *               token_hash:
+ *               access_token:
  *                 type: string
- *                 description: Recovery token hash received from the Supabase password reset email.
- *                 example: example-recovery-token-hash
+ *                 description: Supabase recovery access token received from the email link.
+ *                 example: eyJhbGciOiJIUzI1NiJ9.example-access-token
+ *               refresh_token:
+ *                 type: string
+ *                 description: Supabase recovery refresh token received from the email link.
+ *                 example: example-refresh-token
  *               password:
  *                 type: string
  *                 format: password
  *                 minLength: 8
+ *                 description: New password containing uppercase, lowercase and at least one number.
  *                 example: NewPassword123
  *               confirmPassword:
  *                 type: string
  *                 format: password
  *                 minLength: 8
+ *                 description: Must match the new password.
  *                 example: NewPassword123
  *     responses:
  *       200:
@@ -266,11 +275,15 @@ router.post("/forgot-password", authController.forgotPassword);
  *                   type: string
  *                   example: Password updated successfully. Please log in using your new password.
  *       400:
- *         description: Invalid or expired recovery token, missing fields, or password validation error.
+ *         description: Missing fields, invalid password, password mismatch, or password update failure.
+ *       401:
+ *         description: Invalid, expired or unusable recovery session.
  *       500:
  *         description: Internal server error.
  */
+
 router.post("/reset-password", authController.resetPassword);
+
 
 // Export authentication router.
 module.exports = router;
